@@ -1,0 +1,111 @@
+#!/bin/bash
+
+# make sure that the language of the programs is English
+export LANG=en_US
+
+# abort the mission if an unhandled error occurs
+# set -e
+
+# check dependencies
+readonly DEPENDENCIES=objdump
+
+for dep in $DEPENDENCIES
+do
+	command -v "$dep" &>/dev/null
+done
+
+function print_usage()
+{
+	printf "usage: sysfind.sh [path_to_binary]\n"
+}
+
+# quit the program if no args are given
+[ $# -ne 1 ] && print_usage && exit 1
+
+# check if the file exists
+[ ! -f "$1" ] && echo "cannot open file $1" && exit 1
+bin_path="$1"
+
+# figure out some information about the binary
+bin_arch="$(objdump -x "$bin_path" | awk '/file format/ {print $NF}')"
+has_symbols="$(objdump -x "$bin_path" | grep -q "no symbols" && echo "no" || echo "yes")"
+
+echo -e "Arch:\t\t$bin_arch"
+echo -e "Symbols:\t$has_symbols"
+
+# if the binary has symbols included, its probably not necessary to disassemble
+if [ "$has_symbols" == "yes" ]
+then
+	read -rp "The binary contains symbols. Do you want to proceed anyway? (y/N): " cancel_search
+	case $cancel_search in
+		[Yy]|[Yy][Ee][Ss]) ;;
+		*) exit 0 ;;
+	esac
+fi
+
+# configure the disassembly part based on the information gathered earlier
+case "$bin_arch" in
+	elf64-x86-64)
+		syscall_register_regex="rax|eax"
+		syscall_instruction_regex="syscall"
+		;;
+
+	elf32-i386)
+		syscall_register_regex="eax"
+		syscall_instruction_regex="int[[:space:]]*0x80"
+		;;
+
+	*)
+		echo "$bin_arch is not a supported binary type"
+		exit 1
+		;;
+esac
+
+# disassemble the binary with objdump
+echo "disassembling..."
+disasm=$(objdump -d -M intel --no-show-raw-insn "$bin_path")
+
+# find all syscalls and carve out their addresses
+syscalls="$(echo "$disasm" | grep "$syscall_instruction_regex" | awk '{print $1}' | tr -d ':')"
+echo "found $(echo "$syscalls" | wc -l) syscalls"
+
+IFS="$(echo -e "\n\b")"
+syscall_count="$(echo "$syscalls" | wc -l)"
+progress_counter=0
+
+echo "processing syscalls..."
+for syscall in $syscalls
+do
+	echo -ne "\rprogress: $progress_counter/$syscall_count"
+	progress_counter=$((progress_counter+1))
+
+	# cut out everything after the syscall
+	# and remove the memory addresses and comments from the disassembly
+	trimmed_disasm="$(echo "$disasm" | sed "/$syscall/,\$d; s/^.*:[[:space:]]*//; s/[[:space:]]*#.*//")"
+
+	# reverse the order so that we can iterate through the disassembly
+	# in reverse with a regular for-loop
+	reversed_trimmed_disasm="$(echo "$trimmed_disasm" | tac)"
+
+	# loop over the instructions in the disassembly one by one
+	# and try to look for a mov instruction
+	for instruction in $reversed_trimmed_disasm
+	do
+		# get the name of the instruction
+		mnemonic="$(echo "$instruction" | awk '{print $1}')"
+
+		# skip the instruction if its not a mov
+		[ "$mnemonic" != "mov" ] && continue
+
+		# skip the instruction if we aren't modifying the syscall register
+		instruction_args="$(echo "$instruction" | awk '{print $2}')"
+		target_register="$(echo "$instruction_args" | cut -d ',' -f1)"
+		echo "$target_register" | grep -qE "$syscall_register_regex" || continue
+
+		# we found a mov to the syscall register, get the value we are moving into it
+		value="$(echo "$instruction_args" | cut -d ',' -f2)"
+
+		# break the loop since we found the correct register
+		break
+	done
+done

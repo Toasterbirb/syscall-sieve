@@ -1,4 +1,4 @@
-BIN=script
+BIN=syscall-sieve
 PREFIX=/usr/local
 
 all:
