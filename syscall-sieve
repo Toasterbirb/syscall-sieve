@@ -105,6 +105,12 @@ do
 		# we found a mov to the syscall register, get the value we are moving into it
 		value="$(echo "$instruction_args" | cut -d ',' -f2)"
 
+		# skip the syscall if we can't determine it from the nearest eax/rax register alone
+		# (i.e. ignore non-hex values)
+		echo "$value" | grep -q "0x[0-9]*" || continue
+
+		echo "$value"
+
 		# break the loop since we found the correct register
 		break
 	done
