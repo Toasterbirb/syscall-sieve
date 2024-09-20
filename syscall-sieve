@@ -46,13 +46,13 @@ fi
 # configure the disassembly part based on the information gathered earlier
 case "$bin_arch" in
 	elf64-x86-64)
-		syscall_register_regex="rax|eax"
 		syscall_instruction_regex="syscall"
+		syscall_header_name="unistd_64.h"
 		;;
 
 	elf32-i386)
-		syscall_register_regex="eax"
 		syscall_instruction_regex="int[[:space:]]*0x80"
+		syscall_header_name="unistd_32.h"
 		;;
 
 	*)
@@ -60,6 +60,13 @@ case "$bin_arch" in
 		exit 1
 		;;
 esac
+
+# locate the correct syscall header
+syscall_header="$(find /usr/include -iname "$syscall_header_name" | head -n1)"
+[ -z "$syscall_header" ] && echo "Can't find the syscall header for the $bin_arch architecture" && exit 1
+
+# parse the syscall list into a usable format
+linux_syscalls="$(awk '{print $3 " " $2}' "$syscall_header" | sed 's/__NR_//')"
 
 # disassemble the binary with objdump
 echo "disassembling..."
@@ -69,9 +76,15 @@ disasm=$(objdump -d -M intel --no-show-raw-insn "$bin_path")
 syscalls="$(echo "$disasm" | grep "$syscall_instruction_regex" | awk '{print $1}' | tr -d ':')"
 echo "found $(echo "$syscalls" | wc -l) syscalls"
 
+# cancel processing if no syscalls were found
+[ -z "$syscalls" ] && exit 0
+
+# analyze the binary with radare2 to find the addresses of functions in the binary
+function_addresses="$(r2 -q -A -c afl "$bin_path" | awk '{print $1}' | sed 's/0x0*/0x/; s/^.*0x/0x/')"
+
 IFS="$(echo -e "\n\b")"
 syscall_count="$(echo "$syscalls" | wc -l)"
-progress_counter=0
+progress_counter=1
 
 echo "processing syscalls..."
 for syscall in $syscalls
@@ -87,31 +100,35 @@ do
 	# in reverse with a regular for-loop
 	reversed_trimmed_disasm="$(echo "$trimmed_disasm" | tac)"
 
-	# loop over the instructions in the disassembly one by one
-	# and try to look for a mov instruction
-	for instruction in $reversed_trimmed_disasm
-	do
-		# get the name of the instruction
-		mnemonic="$(echo "$instruction" | awk '{print $1}')"
+	# look for a mov instruction
+	# if should be fine to look for both rax and eax registers here, since 32bit
+	# applications wont use the rax register but a 64bit applicatio might use both
+	mov_instruction="$(echo "$reversed_trimmed_disasm" | grep -E "mov[[:space:]]*(rax|eax)" | head -n1)"
+	instruction_args="$(echo "$mov_instruction" | awk '{print $2}')"
+	value="$(echo "$instruction_args" | cut -d ',' -f2)"
 
-		# skip the instruction if its not a mov
-		[ "$mnemonic" != "mov" ] && continue
+	# skip the syscall if we can't determine it from the nearest eax/rax register alone
+	# (i.e. ignore non-hex values)
+	echo "$value" | grep -q "0x[0-9]*" || continue
 
-		# skip the instruction if we aren't modifying the syscall register
-		instruction_args="$(echo "$instruction" | awk '{print $2}')"
-		target_register="$(echo "$instruction_args" | cut -d ',' -f1)"
-		echo "$target_register" | grep -qE "$syscall_register_regex" || continue
+	# convert the value into decimal
+	value_dec="$(printf "%d" "$value")"
 
-		# we found a mov to the syscall register, get the value we are moving into it
-		value="$(echo "$instruction_args" | cut -d ',' -f2)"
+	# figure out the name of the syscall
+	syscall_name="$(echo "$linux_syscalls" | grep "^$value_dec " | cut -d ' ' -f2)"
 
-		# skip the syscall if we can't determine it from the nearest eax/rax register alone
-		# (i.e. ignore non-hex values)
-		echo "$value" | grep -q "0x[0-9]*" || continue
+	# if no results could be found, move on
+	[ -z "$syscall_name" ] && continue
 
-		echo "$value"
+	# find the closest function to the syscall by appending the syscall
+	# address into the function address list, sorting the list and then picking
+	# the address that is before the syscall address
+	closest_function="$(echo -e "$function_addresses\n0x$syscall" | sort | grep -B1 "0x$syscall" | head -n1)"
 
-		# break the loop since we found the correct register
-		break
-	done
+	# print the result
+	echo -e "\r0x$syscall @ $closest_function -> $syscall_name"
 done
+
+# print a newline char so that the progress counter doesn't get printed
+# on the same line as the next thing
+printf "\n"
