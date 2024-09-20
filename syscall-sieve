@@ -7,7 +7,7 @@ export LANG=en_US
 # set -e
 
 # check dependencies
-readonly DEPENDENCIES=objdump
+readonly DEPENDENCIES="objdump r2"
 
 for dep in $DEPENDENCIES
 do
