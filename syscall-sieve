@@ -7,7 +7,7 @@ export LANG=en_US
 # set -e
 
 # check dependencies
-readonly DEPENDENCIES="objdump r2"
+readonly DEPENDENCIES="objdump r2 objcopy"
 
 for dep in $DEPENDENCIES
 do
@@ -16,15 +16,16 @@ done
 
 function print_usage()
 {
-	printf "usage: sysfind.sh [path_to_binary]\n"
+	printf "usage: sysfind.sh [path_to_binary] [output_file]\n"
 }
 
 # quit the program if no args are given
-[ $# -ne 1 ] && print_usage && exit 1
+[ $# -ne 2 ] && print_usage && exit 1
 
 # check if the file exists
 [ ! -f "$1" ] && echo "cannot open file $1" && exit 1
 bin_path="$1"
+out_path="$2"
 
 # figure out some information about the binary
 bin_arch="$(objdump -x "$bin_path" | awk '/file format/ {print $NF}')"
@@ -125,6 +126,11 @@ do
 	# the address that is before the syscall address
 	closest_function="$(echo -e "$function_addresses\n0x$syscall" | sort | grep -B1 "0x$syscall" | head -n1)"
 
+	# add the result to a list in the following format
+	# function_address;syscall_name
+	syscall_array="${syscall_array}${closest_function};${syscall_name}
+"
+
 	# print the result
 	echo -e "\r0x$syscall @ $closest_function -> $syscall_name"
 done
@@ -132,3 +138,19 @@ done
 # print a newline char so that the progress counter doesn't get printed
 # on the same line as the next thing
 printf "\n"
+
+# deduplicate the syscall array so that only functions that have a singular
+# type of syscall in them get named
+
+deduplicated_syscall_array="$(echo "$syscall_array" | sort | uniq -u)"
+
+# run another deduplication pass based on the function addresses
+function_address_size="$(echo "$syscall_array" | head -n 1 | sed 's/;.*//' | wc -c)"
+deduplicated_syscall_array="$(echo "$deduplicated_syscall_array" | uniq -u --check-chars="$function_address_size")"
+
+echo "adding symbols..."
+cp -vf "$1" "$2"
+for function in $deduplicated_syscall_array
+do
+	objcopy "$2" --add-symbol "sys_${function/*;/}=${function/;*/},function,global" "$2"
+done
