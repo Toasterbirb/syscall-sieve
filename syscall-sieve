@@ -152,5 +152,5 @@ echo "adding symbols..."
 cp -vf "$1" "$2"
 for function in $deduplicated_syscall_array
 do
-	objcopy "$2" --add-symbol "sys_${function/*;/}=${function/;*/},function,global" "$2"
+	objcopy "$out_path" --add-symbol "sys_${function/*;/}=${function/;*/},function,global" "$out_path"
 done
