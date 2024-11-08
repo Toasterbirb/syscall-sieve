@@ -4,7 +4,7 @@
 export LANG=en_US
 
 # abort the mission if an unhandled error occurs
-# set -e
+set -e
 
 # check dependencies
 readonly DEPENDENCIES="objdump r2 objcopy"
