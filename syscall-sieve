@@ -11,7 +11,7 @@ readonly DEPENDENCIES="objdump r2 objcopy"
 
 for dep in $DEPENDENCIES
 do
-	command -v "$dep" &>/dev/null
+	command -v "$dep" &>/dev/null || { echo "Dependency $dep not installed"; exit 1; }
 done
 
 function print_usage()
