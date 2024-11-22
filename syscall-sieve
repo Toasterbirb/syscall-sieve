@@ -98,7 +98,7 @@ do
 	trimmed_disasm="$(echo "$disasm" | sed "/$syscall/,\$d; s/^.*:[[:space:]]*//; s/[[:space:]]*#.*//")"
 
 	# reverse the order so that we can iterate through the disassembly
-	# in reverse with a regular for-loop
+	# in reverse
 	reversed_trimmed_disasm="$(echo "$trimmed_disasm" | tac)"
 
 	# look for a mov instruction
