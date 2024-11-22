@@ -102,8 +102,8 @@ do
 	reversed_trimmed_disasm="$(echo "$trimmed_disasm" | tac)"
 
 	# look for a mov instruction
-	# if should be fine to look for both rax and eax registers here, since 32bit
-	# applications wont use the rax register but a 64bit applicatio might use both
+	# it should be fine to look for both rax and eax registers here, since 32bit
+	# applications wont use the rax register but a 64bit application might use both
 	mov_instruction="$(echo "$reversed_trimmed_disasm" | grep -E "mov[[:space:]]*(rax|eax)" | head -n1)"
 	instruction_args="$(echo "$mov_instruction" | awk '{print $2}')"
 	value="$(echo "$instruction_args" | cut -d ',' -f2)"
